@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Limit, Reading, Tokens } from '../types'
+import type { Reading, Tokens } from '../types'
 
 const reading = atom({ plugin: 'usage-meter', key: 'reading' } as const, null)
 const isHidden = atom({ plugin: 'usage-meter', key: 'isHidden' } as const, false)
@@ -36,13 +36,12 @@ const PLAN = 'ULTRA PLAN'
 
 const BAR_CELLS = 7
 
-function toReading(u: Pick<SessionUsage, 'context' | 'rateLimits' | 'cost'>): Reading {
+function toReading(u: Pick<SessionUsage, 'context' | 'rateLimits'>): Reading {
   return {
     contextPercent: u.context.percent,
     contextTokens: u.context.tokens,
     contextWindow: u.context.window,
     limits: u.rateLimits.map(l => ({ kind: l.kind, percentUsed: l.percentUsed, resetsAt: l.resetsAt })),
-    usd: u.cost?.usd,
   }
 }
 
@@ -63,7 +62,24 @@ function untilReset(resetsAt: string | undefined, now: number): string {
   return d > 0 ? `${d}d${hh}:${mm}` : `${hh}:${mm}`
 }
 
-export type Palette = Record<'frame' | 'panel' | 'edge' | 'code' | 'ok' | 'warn' | 'hot' | 'off' | 'note' | 'value', string>
+export type Palette = Record<'frame' | 'panel' | 'edge' | 'code' | 'ok' | 'warn' | 'hot' | 'off' | 'note', string>
+
+// Console palette: dark violet panels, warning-orange edges and codes,
+// phosphor green readouts that turn amber then red as a limit fills.
+const C: Palette = {
+  frame: '#0d0717',
+  panel: '#160b26',
+  edge: '#ff7a1a',
+  code: '#ff7a1a',
+  ok: '#3dff8a',
+  warn: '#ffb000',
+  hot: '#ff2d3f',
+  off: '#4a3b63',
+  note: '#b48cff',
+}
+const HOT_AT = 90
+const WARN_AT = 75
+const tone = (p: number) => (p >= HOT_AT ? C.hot : p >= WARN_AT ? C.warn : C.ok)
 
 const FONT = "'SF Mono', Menlo, Monaco, Consolas, monospace"
 
@@ -93,7 +109,7 @@ function stripe(x: number, y: number, w: number, h: number, slant: number, fill:
 type Seg = { text: string; color: string; weight?: number } | { bar: number }
 
 // The desktop band as one SVG: an octagon frame, a header strip and octagon readout chips.
-export function drawConsole(r: Reading, t: Tokens, last: number, now: number, C: Palette, tone: (p: number) => string) {
+export function drawConsole(r: Reading, t: Tokens, last: number, now: number) {
   const SIZE = 13
   const PAD = 7
   const CHIP_H = 22
@@ -237,16 +253,20 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await refresh($)
+    // The countdowns run on while nothing else changes: read the usage again each minute,
+    // which also picks up a window that has just reset.
+    $.clock.every(60_000, () => void refresh($).catch(() => {}))
     $.command.register({ name: 'usage-meter', description: 'Show or hide the usage meter above the prompt' })
     return result
   })
 
   on('session.measure', async ($, e, next) => {
+    const before = await read($, reading)
     await update($, reading, () => toReading(e))
-    const hot = e.rateLimits.find(l => l.percentUsed >= 90)
-    if (hot && e.changed.includes('rateLimits')) {
-      $.ui.toast(`${LABELS[hot.kind] ?? hot.kind} limit at ${hot.percentUsed}%`)
-    }
+    // One toast as a limit crosses the red line, not one per percent after it.
+    const wasHot = (kind: string) => (before?.limits.find(l => l.kind === kind)?.percentUsed ?? 0) >= HOT_AT
+    const hot = e.rateLimits.find(l => l.percentUsed >= HOT_AT && !wasHot(l.kind))
+    if (hot) $.ui.toast(`${LABELS[hot.kind] ?? hot.kind} limit at ${Math.round(hot.percentUsed)}%`)
     return next(e)
   })
 
@@ -279,161 +299,60 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const r = await read($, reading)
-    if (r === null || e.props.hasSurvey || (await read($, isHidden))) {
-      return next(e)
-    }
-
-    const { Box, Text } = $.ui.resolve(e)
-    const now = await $.clock.now()
-    const t = await read($, tokens)
-    const last = await read($, lastTurn)
-    const isTerminal = e.surface === 'terminal'
-
-    // Console palette: dark violet panels, warning-orange edges and codes,
-    // phosphor green readouts that turn amber then red as a limit fills.
-    const C = {
-      frame: '#0d0717',
-      panel: '#160b26',
-      edge: '#ff7a1a',
-      code: '#ff7a1a',
-      ok: '#3dff8a',
-      warn: '#ffb000',
-      hot: '#ff2d3f',
-      off: '#4a3b63',
-      note: '#b48cff',
-      value: '#e9fff0',
-    }
-    const tone = (p: number) => (p >= 90 ? C.hot : p >= 75 ? C.warn : C.ok)
+    const [r, hidden, t, last, now] = await Promise.all([
+      read($, reading),
+      read($, isHidden),
+      read($, tokens),
+      read($, lastTurn),
+      $.clock.now(),
+    ])
+    if (r === null || hidden || e.props.hasSurvey) return next(e)
 
     // Desktop, mobile and the editor: the band is one drawing, so its frames can have
     // chamfered (octagon) corners, which a Box border cannot.
-    if (!isTerminal) {
-      const els = $.ui.resolve(e)
-      if ('Svg' in els) {
-        const { svg, alt } = drawConsole(r, t, last, now, C, tone)
-        return <els.Svg source={svg} alt={alt} />
-      }
+    const els = $.ui.resolve(e)
+    if (e.surface !== 'terminal' && 'Svg' in els) {
+      const { svg, alt } = drawConsole(r, t, last, now)
+      return <els.Svg source={svg} alt={alt} />
     }
 
-    const big = isTerminal ? undefined : ('body' as const)
-    const pipe = (key: string) => <Text key={key} color={C.edge}>│</Text>
-
-    // Each section: an orange frame, its parts split by thin dividers.
-    const chip = (key: string, children: JSX.Element[]) => {
-      const parts: JSX.Element[] = []
-      children.forEach((c, i) => {
-        if (i > 0 && !isTerminal) parts.push(pipe(`${key}p${i}`))
-        parts.push(c)
-      })
-      return isTerminal ? (
-        <Box key={key} gap={1} alignItems="center" flexShrink={0}>{parts}</Box>
-      ) : (
-        <Box
-          key={key}
-          gap="xs"
-          alignItems="center"
-          flexShrink={0}
-          borderStyle="round"
-          borderColor={C.edge}
-          backgroundColor={C.panel}
-          paddingX="xs"
-        >
-          {parts}
-        </Box>
-      )
-    }
-
-    const code = (text: string) => (
-      <Text mono size={big} weight="bold" color={C.code}>{text}</Text>
-    )
-
-    const bar = (percent: number) => {
-      const lit = filledCells(percent)
+    // The terminal: one line of text.
+    const { Box, Text } = els
+    const code = (text: string) => <Text weight="bold" color={C.code}>{text}</Text>
+    const pct = (p: number) => <Text weight="bold" color={tone(p)}>{Math.round(p)}%</Text>
+    const note = (text: string) => <Text color={C.note}>{text}</Text>
+    const bar = (p: number) => {
+      const lit = filledCells(p)
       return (
-        <Text mono size={big}>
-          <Text color={tone(percent)}>{'▰'.repeat(lit)}</Text>
+        <Text>
+          <Text color={tone(p)}>{'▰'.repeat(lit)}</Text>
           <Text color={C.off}>{'▱'.repeat(BAR_CELLS - lit)}</Text>
         </Text>
       )
     }
 
-    const pct = (percent: number) => (
-      <Text mono size={big} weight="bold" tabular color={tone(percent)}>{Math.round(percent)}%</Text>
-    )
-
-    const note = (text: string) => <Text mono size={big} color={C.note} tabular>{text}</Text>
-
-    const chips: JSX.Element[] = []
-
-    chips.push(
-      chip('ctx', [code('CTX'), r.contextPercent !== undefined ? pct(r.contextPercent) : note('--')]),
-    )
-
-    for (const l of r.limits as Limit[]) {
-      const parts = [code(codeFor(l.kind)), bar(l.percentUsed), pct(l.percentUsed)]
+    const chips: JSX.Element[][] = [
+      [code('CTX'), r.contextPercent !== undefined ? pct(r.contextPercent) : note('--')],
+    ]
+    for (const l of r.limits) {
       const left = untilReset(l.resetsAt, now)
-      if (left) parts.push(note(left))
-      chips.push(chip(l.kind, parts))
+      chips.push([code(codeFor(l.kind)), bar(l.percentUsed), pct(l.percentUsed), ...(left ? [note(left)] : [])])
     }
+    chips.push([
+      code('TOK'),
+      <Text weight="bold" color={C.ok}>{compact(totalTokens(t))}</Text>,
+      ...(last > 0 ? [note(`+${compact(last)}`)] : []),
+    ])
 
-    chips.push(
-      chip('tok', [
-        code('TOK'),
-        <Text mono size={big} weight="bold" tabular color={C.ok}>{compact(totalTokens(t))}</Text>,
-        ...(last > 0 ? [note(`+${compact(last)}`)] : []),
-      ]),
-    )
-
-    const alert = <Text key="alert" size={isTerminal ? undefined : 'heading'} weight="bold" color={C.hot}>⚠</Text>
-
-    if (isTerminal) {
-      const row: JSX.Element[] = [alert]
-      chips.forEach((c, i) => {
-        if (i > 0) row.push(<Text key={`sep${i}`} color={C.off}>│</Text>)
-        row.push(c)
-      })
-      return (
-        <Box flexWrap="nowrap" alignItems="center" gap={1} overflow="hidden">{row}</Box>
-      )
-    }
-
-    // Desktop and mobile: a framed console with a header strip over the readouts.
-    const cap = (text: string, color: string) => (
-      <Text mono size="caption" weight="bold" color={color}>{text}</Text>
-    )
-    const stripe = (text: string, color: string) => (
-      <Text mono size="footnote" weight="bold" italic color={color}>{text}</Text>
-    )
     return (
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={C.edge}
-        backgroundColor={C.frame}
-        paddingX="xs"
-        paddingY={0}
-        gap="xs"
-        overflow="hidden"
-      >
-        <Box justifyContent="space-between" alignItems="center" flexWrap="nowrap">
-          <Box gap="xs" alignItems="center" flexShrink={0}>
-            {stripe('///', C.edge)}
-            {cap('|', C.edge)}
-            {cap('警告 WARNING', C.edge)}
-            {cap('|', C.edge)}
-            {cap('Claude-usage', C.note)}
+      <Box flexWrap="nowrap" alignItems="center" gap={1} overflow="hidden">
+        <Text weight="bold" color={C.hot}>⚠</Text>
+        {chips.map((parts, i) => (
+          <Box key={`chip${i}`} gap={1} alignItems="center" flexShrink={0}>
+            {i > 0 ? <Text color={C.off}>│</Text> : null}
+            {parts}
           </Box>
-          <Box gap="xs" alignItems="center" flexShrink={0}>
-            {cap(PLAN, C.note)}
-            {stripe('//', C.note)}
-            {stripe('///', C.edge)}
-          </Box>
-        </Box>
-        <Box gap="xs" alignItems="center" flexWrap="nowrap" overflow="hidden">
-          {alert}
-          {chips}
-        </Box>
+        ))}
       </Box>
     )
   })

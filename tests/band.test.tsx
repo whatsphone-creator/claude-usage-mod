@@ -14,7 +14,7 @@ const BAND = {
   },
 } as const
 
-test('the band draws context, limits and cost on every surface', async ($, on) => {
+test('the band draws context, limits and tokens on every surface', async ($, on) => {
   on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -32,7 +32,6 @@ test('the band draws context, limits and cost on every surface', async ($, on) =
                 { kind: 'five_hour', percentUsed: 82, resetsAt: '2099-01-01T00:00:00Z' },
                 { kind: 'seven_day', percentUsed: 8 },
               ],
-              usd: 1.84,
             },
             version: 1,
           },

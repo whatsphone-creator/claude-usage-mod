@@ -4,7 +4,6 @@ export type Reading = {
   contextTokens?: number
   contextWindow: number
   limits: Limit[]
-  usd?: number
 }
 // Tokens this session's turns have used, summed from each turn's reported usage.
 export type Tokens = { input: number; output: number; cacheRead: number; cacheWrite: number }
