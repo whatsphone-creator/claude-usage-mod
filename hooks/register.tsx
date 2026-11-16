@@ -41,9 +41,6 @@ function codeFor(kind: string): string {
 }
 const LABELS: Record<string, string> = { five_hour: '5 小時', seven_day: '7 日', spend_limit: '額度' }
 
-// The account's plan, shown in the header's right corner. The mod API does not expose it, so it is set here.
-const PLAN = 'ULTRA PLAN'
-
 const BAR_CELLS = 7
 
 function toReading(u: Pick<SessionUsage, 'context' | 'rateLimits'>): Reading {
@@ -132,7 +129,8 @@ function groupLimits(limits: Limit[], now: number): { members: Limit[]; left: st
 type Seg = { text: string; color: string; weight?: number } | { bar: number }
 
 // The desktop band as one SVG: an octagon frame, a header strip and octagon readout chips.
-export function drawConsole(r: Reading, t: Tokens, last: number, now: number) {
+// `plan` is the label in the header's right corner (the `plan` option); empty draws none.
+export function drawConsole(r: Reading, t: Tokens, last: number, now: number, plan: string) {
   const SIZE = 13
   const PAD = 7
   const CHIP_H = 22
@@ -186,7 +184,7 @@ export function drawConsole(r: Reading, t: Tokens, last: number, now: number) {
 
   const rowW = ALERT_W + 6 + chips.reduce((a, c) => a + chipW(c) + 5, -5)
   const leftHead = 3 * 9 + 8 + textWidth('警告 WARNING', HS) + 24 + textWidth('Claude-usage', HS)
-  const rightHead = textWidth(PLAN, HS) + 8 + 2 * 9 + 6 + 3 * 9
+  const rightHead = textWidth(plan, HS) + 8 + 2 * 9 + 6 + 3 * 9
   const W = Math.ceil(Math.max(rowW, leftHead + rightHead + 40) + PAD * 2)
   const H = rowY + CHIP_H + PAD
 
@@ -217,11 +215,11 @@ export function drawConsole(r: Reading, t: Tokens, last: number, now: number) {
   rx -= 6 + 2 * 9
   for (let i = 0; i < 2; i++) out.push(stripe(rx + i * 9, ry - 3.5, 6, 7, 3, C.note))
   rx -= 6
-  out.push(htext(rx, PLAN, C.note, 'end', ry))
+  if (plan) out.push(htext(rx, plan, C.note, 'end', ry))
 
   // Header underline: one line under the whole strip, stepping up at an angle before the right labels.
   const lineY = headY + 7
-  const stepX = rx - textWidth(PLAN, HS) - 14
+  const stepX = rx - textWidth(plan, HS) - 14
   out.push(
     `<polyline points="0.75,${lineY} ${(stepX - STEP).toFixed(1)},${lineY} ${stepX.toFixed(1)},${lineY - STEP} ${(W - 0.75).toFixed(1)},${lineY - STEP}" fill="none" stroke="${C.edge}" stroke-width="1.2" stroke-linejoin="miter"/>`,
   )
@@ -323,7 +321,10 @@ async function refreshModels($: EngineInterface) {
   await update($, modelNote, () => note)
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  // Claude Code does not tell a mod which plan the account is on, so the label is an option.
+  const plan = String(options.plan ?? '').trim().slice(0, 24)
+
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await refresh($)
@@ -391,7 +392,7 @@ export const register: Register = on => {
     // chamfered (octagon) corners, which a Box border cannot.
     const els = $.ui.resolve(e)
     if (e.surface !== 'terminal' && 'Svg' in els) {
-      const { svg, alt } = drawConsole(r, t, last, now)
+      const { svg, alt } = drawConsole(r, t, last, now, plan)
       return <els.Svg source={svg} alt={alt} />
     }
 

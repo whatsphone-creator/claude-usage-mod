@@ -9,7 +9,11 @@ A Claude Code mod that shows your usage in a band above the prompt, styled like 
 
 In the desktop app the band is drawn as one picture with octagon frames; in a terminal it is a single text line. Run `/usage-meter` to hide or show it.
 
-The plan name in the header's right corner is set in `hooks/register.tsx` (`PLAN`), since Claude Code does not tell mods which plan you are on.
+The plan name in the header's right corner is the mod's `plan` option (empty by default, so none is shown), since Claude Code does not tell mods which plan you are on. Set it in `/config`, or in `~/.claude/settings.json`:
+
+```json
+{ "pluginConfigs": { "usage-meter": { "options": { "plan": "MAX PLAN" } } } }
+```
 
 ## Install
 

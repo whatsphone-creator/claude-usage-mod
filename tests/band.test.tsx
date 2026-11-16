@@ -14,7 +14,7 @@ const BAND = {
   },
 } as const
 
-test('the band draws context, limits and tokens on every surface', async ($, on) => {
+test('the band draws context, limits and tokens on every surface', { options: { plan: 'ULTRA PLAN' } }, async ($, on) => {
   on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
   on('ui.render', ($, e) => {
     const { Text } = $.ui.resolve(e)
@@ -77,4 +77,28 @@ test('the band draws context, limits and tokens on every surface', async ($, on)
     expect(String(svg?.props.alt ?? '')).toContain('Context 38%')
     await ui.unmount()
   }
+})
+
+test('with no plan option the header shows no plan label', async ($, on) => {
+  on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  on('state.get', (_, e) =>
+    e.key === 'reading'
+      ? { value: { value: { contextPercent: 38, contextWindow: 200000, limits: [] }, version: 1 } }
+      : e.key === 'tokens'
+        ? { value: { value: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, version: 1 } }
+        : e.key === 'modelLimits'
+          ? { value: { value: [], version: 1 } }
+          : e.key === 'lastTurn'
+            ? { value: { value: 0, version: 1 } }
+            : { value: { value: false, version: 1 } },
+  )
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const source = String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
+  expect(source.includes('>Claude-usage<')).toBe(true)
+  expect(source.includes('PLAN')).toBe(false)
+  await ui.unmount()
 })
