@@ -12,7 +12,7 @@ There is a daylight skin for light mode:
 
 ![The daylight skin](docs/band-light.png)
 
-(The pictures are the mod's own drawing with sample numbers.)
+(The pictures are the mod's own drawing with sample numbers. The ◐ button is drawn by the app, so it may sit a little differently there.)
 
 - **CTX**: how full this session's context window is.
 - **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset.
