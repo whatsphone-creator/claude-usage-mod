@@ -15,7 +15,7 @@ There is a daylight skin for light mode:
 (The pictures are the mod's own drawing with sample numbers. The ◐ button is drawn by the app, so it may sit a little differently there.)
 
 - **CTX**: how full this session's context window is.
-- **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset.
+- **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset. The figures come from the session, and every 5 minutes from Anthropic's account usage endpoint, so they keep up with usage elsewhere while this session sits idle.
 - **FABLE** (and other per-model weekly limits): read from Anthropic's account usage endpoint with the session's own sign-in, refreshed every 5 minutes. A limit that resets at the same moment as 7D shares its chip and countdown.
 - **TOK**: tokens this session has used since the mod loaded, plus the last turn's tokens.
 

@@ -162,3 +162,41 @@ test('the button beside the band flips the skin', { options: { skin: 'dark' } },
   expect((await drawn()).includes('#0d0717')).toBe(true)
   await ui.unmount()
 })
+
+test('the endpoint\'s 5-hour and 7-day figures replace the session\'s once they are newer', async ($, on) => {
+  let measured = 5000
+  on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  on('state.get', (_, e) =>
+    e.key === 'reading'
+      ? { value: { value: { contextPercent: 38, contextWindow: 200000, limits: [{ kind: 'five_hour', percentUsed: 82 }] }, version: 1 } }
+      : e.key === 'live'
+        ? { value: { value: { at: 4000, limits: [{ kind: 'five_hour', percentUsed: 91 }, { kind: 'seven_day', percentUsed: 12 }] }, version: 1 } }
+        : e.key === 'measuredAt'
+          ? { value: { value: measured, version: 1 } }
+          : e.key === 'tokens'
+            ? { value: { value: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, version: 1 } }
+            : e.key === 'modelLimits'
+              ? { value: { value: [], version: 1 } }
+              : e.key === 'lastTurn'
+                ? { value: { value: 0, version: 1 } }
+                : { value: { value: false, version: 1 } },
+  )
+  // The session measured after the fetch: its 82% stands.
+  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  let source = String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
+  expect(source.includes('>82%<')).toBe(true)
+  expect(source.includes('>91%<')).toBe(false)
+  await ui.unmount()
+  // The fetch is the newer one: its 91% shows, and the 7-day window it also knows.
+  measured = 3000
+  ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  source = String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
+  expect(source.includes('>91%<')).toBe(true)
+  expect(source.includes('>82%<')).toBe(false)
+  expect(source.includes('>12%<')).toBe(true)
+  await ui.unmount()
+})

@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Limit, Reading, Tokens } from '../types'
+import type { Limit, Live, Reading, Tokens } from '../types'
 
 const reading = atom({ plugin: 'usage-meter', key: 'reading' } as const, null)
 const isHidden = atom({ plugin: 'usage-meter', key: 'isHidden' } as const, false)
@@ -14,6 +14,13 @@ const lastTurn = atom({ plugin: 'usage-meter', key: 'lastTurn' } as const, 0)
 // the session's own usage carries only the 5-hour and 7-day windows.
 const NO_LIMITS: Limit[] = []
 const modelLimits = atom({ plugin: 'usage-meter', key: 'modelLimits' } as const, NO_LIMITS)
+// The 5-hour and 7-day windows as that endpoint last gave them, and when. The session's own
+// figures only move when this session talks to Claude, so while it sits idle (and the account
+// is used elsewhere) the endpoint's are the newer ones.
+const NO_LIVE: Live = { at: 0, limits: [] }
+const live = atom({ plugin: 'usage-meter', key: 'live' } as const, NO_LIVE)
+// When the session last measured its own usage.
+const measuredAt = atom({ plugin: 'usage-meter', key: 'measuredAt' } as const, 0)
 // What the last fetch of that endpoint came to, for /usage-meter to report.
 const modelNote = atom({ plugin: 'usage-meter', key: 'modelNote' } as const, 'not fetched yet')
 
@@ -327,7 +334,20 @@ async function refreshModels($: EngineInterface) {
       if (!res.ok) {
         note = `HTTP ${res.status}`
       } else {
-        const body = JSON.parse(res.text) as { limits?: unknown } | null
+        const body = JSON.parse(res.text) as ({ limits?: unknown } & Record<string, unknown>) | null
+        // The two windows the session also carries, under the session's own names.
+        const base: Limit[] = []
+        for (const kind of ['five_hour', 'seven_day']) {
+          const w = body?.[kind] as { utilization?: unknown; resets_at?: unknown } | null | undefined
+          if (!w || typeof w.utilization !== 'number') continue
+          base.push({
+            kind,
+            percentUsed: w.utilization,
+            resetsAt: typeof w.resets_at === 'string' ? w.resets_at : undefined,
+          })
+        }
+        const at = await $.clock.now()
+        await update($, live, () => ({ at, limits: base }))
         const found: Limit[] = []
         const seen: string[] = []
         // `limits` lists every window; the scoped ones (a weekly limit for one model, such as
@@ -378,6 +398,8 @@ export const register: Register = (on, options) => {
   on('session.measure', async ($, e, next) => {
     const before = await read($, reading)
     await update($, reading, () => toReading(e))
+    const at = await $.clock.now()
+    await update($, measuredAt, () => at)
     // One toast as a limit crosses the red line, not one per percent after it.
     const wasHot = (kind: string) => (before?.limits.find(l => l.kind === kind)?.percentUsed ?? 0) >= HOT_AT
     const hot = e.rateLimits.find(l => l.percentUsed >= HOT_AT && !wasHot(l.kind))
@@ -414,7 +436,7 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [session, models, hidden, t, last, now, pick] = await Promise.all([
+    const [session, models, hidden, t, last, now, pick, fetched, measured] = await Promise.all([
       read($, reading),
       read($, modelLimits),
       read($, isHidden),
@@ -422,11 +444,17 @@ export const register: Register = (on, options) => {
       read($, lastTurn),
       $.clock.now(),
       read($, skinPick),
+      read($, live),
+      read($, measuredAt),
     ])
     const skin: Skin = pick === 'dark' || pick === 'light' ? pick : configured
     if (session === null || hidden || e.props.hasSurvey) return next(e)
-    const known = new Set(session.limits.map(l => l.kind))
-    const r: Reading = { ...session, limits: [...session.limits, ...models.filter(l => !known.has(l.kind))] }
+    // Whichever measured the 5-hour and 7-day windows last is shown: the session or the endpoint.
+    const fresh = fetched && Array.isArray(fetched.limits) && fetched.at > (Number(measured) || 0) ? fetched.limits : []
+    const base = session.limits.map(l => fresh.find(f => f.kind === l.kind) ?? l)
+    const known = new Set(base.map(l => l.kind))
+    const extra = [...fresh, ...models].filter(l => !known.has(l.kind))
+    const r: Reading = { ...session, limits: [...base, ...extra] }
 
     // Desktop, mobile and the editor: the band is one drawing, so its frames can have
     // chamfered (octagon) corners, which a Box border cannot.
