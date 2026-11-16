@@ -10,6 +10,6 @@ export type Tokens = { input: number; output: number; cacheRead: number; cacheWr
 
 declare module 'claude-code' {
   interface PluginState {
-    'usage-meter': { reading: Reading | null; isHidden: boolean; tokens: Tokens; lastTurn: number; modelLimits: Limit[]; modelNote: string }
+    'usage-meter': { reading: Reading | null; isHidden: boolean; tokens: Tokens; lastTurn: number; modelLimits: Limit[]; modelNote: string; skinPick: 'dark' | 'light' | null }
   }
 }

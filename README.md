@@ -8,7 +8,11 @@ Readouts turn amber at 75% and red at 90%:
 
 ![The band with limits running high](docs/band-high.png)
 
-(Both pictures are the mod's own drawing with sample numbers.)
+There is a daylight skin for light mode:
+
+![The daylight skin](docs/band-light.png)
+
+(The pictures are the mod's own drawing with sample numbers.)
 
 - **CTX**: how full this session's context window is.
 - **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset.
@@ -22,6 +26,8 @@ The plan name in the header's right corner is the mod's `plan` option (empty by 
 ```json
 { "pluginConfigs": { "usage-meter": { "options": { "plan": "MAX PLAN" } } } }
 ```
+
+The `skin` option picks the look: `auto` (the default) follows light or dark mode where the surface lets the drawing see it and is otherwise dark, `dark` is the violet console, `light` is the daylight one. In the desktop app the small ◐ button beside the band flips between dark and light, and the pick is remembered.
 
 ## Install
 

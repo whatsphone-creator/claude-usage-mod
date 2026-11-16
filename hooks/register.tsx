@@ -17,6 +17,11 @@ const modelLimits = atom({ plugin: 'usage-meter', key: 'modelLimits' } as const,
 // What the last fetch of that endpoint came to, for /usage-meter to report.
 const modelNote = atom({ plugin: 'usage-meter', key: 'modelNote' } as const, 'not fetched yet')
 
+// The skin picked with the band's own button; null until then, when the `skin` option decides.
+// Kept in the store too, so the pick outlasts the session.
+const NO_PICK: 'dark' | 'light' | null = null
+const skinPick = atom({ plugin: 'usage-meter', key: 'skinPick' } as const, NO_PICK)
+
 function totalTokens(t: Tokens): number {
   return t.input + t.output + t.cacheRead + t.cacheWrite
 }
@@ -84,9 +89,38 @@ const C: Palette = {
   off: '#4a3b63',
   note: '#b48cff',
 }
+// The daylight skin: the same console on warm paper, its inks darkened to read on a light ground.
+const LIGHT: Palette = {
+  frame: '#f7f1e6',
+  panel: '#fffdf8',
+  edge: '#d4500a',
+  code: '#d4500a',
+  ok: '#0b8043',
+  warn: '#b06a00',
+  hot: '#d3162b',
+  off: '#cdc3dd',
+  note: '#6a3fd0',
+}
+
+export type Skin = 'auto' | 'dark' | 'light'
+
+// The drawing is made in the dark palette, then dressed: `light` swaps every colour, and `auto`
+// keeps the dark colours and adds a stylesheet that swaps them where the surface is in light
+// mode (a surface that drops the stylesheet shows the dark skin).
+function dress(svg: string, skin: Skin): string {
+  if (skin === 'dark') return svg
+  const pairs = [...new Map((Object.keys(C) as (keyof Palette)[]).map(k => [C[k], LIGHT[k]])).entries()]
+  if (skin === 'light') return pairs.reduce((out, [dark, light]) => out.split(dark).join(light), svg)
+  const rules = pairs
+    .map(([dark, light]) => `[fill="${dark}"]{fill:${light}}[stroke="${dark}"]{stroke:${light}}`)
+    .join('')
+  return svg.replace(/(<svg[^>]*>)/, `$1<style>@media (prefers-color-scheme: light){${rules}}</style>`)
+}
+
 const HOT_AT = 90
 const WARN_AT = 75
-const tone = (p: number) => (p >= HOT_AT ? C.hot : p >= WARN_AT ? C.warn : C.ok)
+const toneIn = (P: Palette) => (p: number) => (p >= HOT_AT ? P.hot : p >= WARN_AT ? P.warn : P.ok)
+const tone = toneIn(C)
 
 const FONT = "'SF Mono', Menlo, Monaco, Consolas, monospace"
 
@@ -324,10 +358,13 @@ async function refreshModels($: EngineInterface) {
 export const register: Register = (on, options) => {
   // Claude Code does not tell a mod which plan the account is on, so the label is an option.
   const plan = String(options.plan ?? '').trim().slice(0, 24)
+  const configured: Skin = options.skin === 'light' || options.skin === 'dark' ? options.skin : 'auto'
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     await refresh($)
+    const kept = await $.store.get('skin').catch(() => undefined)
+    if (kept === 'dark' || kept === 'light') await update($, skinPick, () => kept)
     // The countdowns run on while nothing else changes: read the usage again each minute,
     // which also picks up a window that has just reset.
     $.clock.every(60_000, () => void refresh($).catch(() => {}))
@@ -376,14 +413,16 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [session, models, hidden, t, last, now] = await Promise.all([
+    const [session, models, hidden, t, last, now, pick] = await Promise.all([
       read($, reading),
       read($, modelLimits),
       read($, isHidden),
       read($, tokens),
       read($, lastTurn),
       $.clock.now(),
+      read($, skinPick),
     ])
+    const skin: Skin = pick === 'dark' || pick === 'light' ? pick : configured
     if (session === null || hidden || e.props.hasSurvey) return next(e)
     const known = new Set(session.limits.map(l => l.kind))
     const r: Reading = { ...session, limits: [...session.limits, ...models.filter(l => !known.has(l.kind))] }
@@ -393,20 +432,33 @@ export const register: Register = (on, options) => {
     const els = $.ui.resolve(e)
     if (e.surface !== 'terminal' && 'Svg' in els) {
       const { svg, alt } = drawConsole(r, t, last, now, plan)
-      return <els.Svg source={svg} alt={alt} />
+      // The drawing takes no press itself, so the skin switch is a small button beside it.
+      const flip = async () => {
+        const to = skin === 'light' ? 'dark' : 'light'
+        await update($, skinPick, () => to)
+        await $.store.set('skin', to).catch(() => {})
+      }
+      return (
+        <els.Box alignItems="center" gap="xs">
+          <els.Svg source={dress(svg, skin)} alt={alt} />
+          <els.Button key="skin" plain dimColor label="◐" onPress={() => void flip()} />
+        </els.Box>
+      )
     }
 
     // The terminal: one line of text.
     const { Box, Text } = els
-    const code = (text: string) => <Text weight="bold" color={C.code}>{text}</Text>
+    const P = skin === 'light' ? LIGHT : C
+    const tone = toneIn(P)
+    const code = (text: string) => <Text weight="bold" color={P.code}>{text}</Text>
     const pct = (p: number) => <Text weight="bold" color={tone(p)}>{Math.round(p)}%</Text>
-    const note = (text: string) => <Text color={C.note}>{text}</Text>
+    const note = (text: string) => <Text color={P.note}>{text}</Text>
     const bar = (p: number) => {
       const lit = filledCells(p)
       return (
         <Text>
           <Text color={tone(p)}>{'▰'.repeat(lit)}</Text>
-          <Text color={C.off}>{'▱'.repeat(BAR_CELLS - lit)}</Text>
+          <Text color={P.off}>{'▱'.repeat(BAR_CELLS - lit)}</Text>
         </Text>
       )
     }
@@ -422,16 +474,16 @@ export const register: Register = (on, options) => {
     }
     chips.push([
       code('TOK'),
-      <Text weight="bold" color={C.ok}>{compact(totalTokens(t))}</Text>,
+      <Text weight="bold" color={P.ok}>{compact(totalTokens(t))}</Text>,
       ...(last > 0 ? [note(`+${compact(last)}`)] : []),
     ])
 
     return (
       <Box flexWrap="nowrap" alignItems="center" gap={1} overflow="hidden">
-        <Text weight="bold" color={C.hot}>⚠</Text>
+        <Text weight="bold" color={P.hot}>⚠</Text>
         {chips.map((parts, i) => (
           <Box key={`chip${i}`} gap={1} alignItems="center" flexShrink={0}>
-            {i > 0 ? <Text color={C.off}>│</Text> : null}
+            {i > 0 ? <Text color={P.off}>│</Text> : null}
             {parts}
           </Box>
         ))}

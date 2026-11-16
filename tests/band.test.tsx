@@ -102,3 +102,63 @@ test('with no plan option the header shows no plan label', async ($, on) => {
   expect(source.includes('PLAN')).toBe(false)
   await ui.unmount()
 })
+
+for (const [skin, has, hasNot] of [
+  ['light', '#f7f1e6', '#0d0717'],
+  ['dark', '#0d0717', 'prefers-color-scheme'],
+  ['auto', 'prefers-color-scheme: light', '>undefined<'],
+] as const) {
+  test(`the ${skin} skin dresses the drawing`, { options: { skin } }, async ($, on) => {
+    on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
+    on('ui.render', ($, e) => {
+      const { Text } = $.ui.resolve(e)
+      return <Text>engine</Text>
+    })
+    on('state.get', (_, e) =>
+      e.key === 'reading'
+        ? { value: { value: { contextPercent: 38, contextWindow: 200000, limits: [{ kind: 'five_hour', percentUsed: 82 }] }, version: 1 } }
+        : e.key === 'tokens'
+          ? { value: { value: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, version: 1 } }
+          : e.key === 'modelLimits'
+            ? { value: { value: [], version: 1 } }
+            : e.key === 'lastTurn'
+              ? { value: { value: 0, version: 1 } }
+              : { value: { value: false, version: 1 } },
+    )
+    const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+    const source = String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
+    expect(source.includes(has)).toBe(true)
+    expect(source.includes(hasNot)).toBe(false)
+    expect(source.includes('>82%<')).toBe(true)
+    await ui.unmount()
+  })
+}
+
+test('the button beside the band flips the skin', { options: { skin: 'dark' } }, async ($, on) => {
+  on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  on('state.get', (_, e, next) =>
+    e.key === 'skinPick'
+      ? next(e)
+      : e.key === 'reading'
+        ? { value: { value: { contextPercent: 38, contextWindow: 200000, limits: [] }, version: 1 } }
+        : e.key === 'tokens'
+          ? { value: { value: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, version: 1 } }
+          : e.key === 'modelLimits'
+            ? { value: { value: [], version: 1 } }
+            : e.key === 'lastTurn'
+              ? { value: { value: 0, version: 1 } }
+              : { value: { value: false, version: 1 } },
+  )
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const drawn = async () => String((await ui.find({ type: 'Svg' }))?.props.source ?? '')
+  expect((await drawn()).includes('#0d0717')).toBe(true)
+  await ui.press({ key: 'skin' })
+  expect((await drawn()).includes('#f7f1e6')).toBe(true)
+  await ui.press({ key: 'skin' })
+  expect((await drawn()).includes('#0d0717')).toBe(true)
+  await ui.unmount()
+})
