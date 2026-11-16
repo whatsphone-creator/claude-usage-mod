@@ -1,0 +1,5 @@
+{
+  "name": "claude-usage-mod",
+  "owner": { "name": "whatsphone-creator" },
+  "plugins": [{ "name": "usage-meter", "source": "./" }]
+}
