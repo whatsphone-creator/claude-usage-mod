@@ -21,10 +21,10 @@ There is a daylight skin for light mode:
 
 In the desktop app the band is drawn as one picture with octagon frames; in a terminal it is a single text line. Run `/usage-meter` to hide or show it.
 
-The plan name in the header's right corner is the mod's `plan` option (empty by default, so none is shown), since Claude Code does not tell mods which plan you are on. Set it in `/config`, or in `~/.claude/settings.json`:
+The plan name in the header's right corner is the mod's `plan` option (empty by default, so none is shown), since Claude Code does not tell mods which plan you are on. Set it when installing with `--config plan="MAX PLAN"`, later with `/plugin configure usage-meter@claude-usage-mod`, or in `~/.claude/settings.json`:
 
 ```json
-{ "pluginConfigs": { "usage-meter": { "options": { "plan": "MAX PLAN" } } } }
+{ "pluginConfigs": { "usage-meter@claude-usage-mod": { "options": { "plan": "MAX PLAN" } } } }
 ```
 
 The `skin` option picks the look: `auto` (the default) follows light or dark mode where the surface lets the drawing see it and is otherwise dark, `dark` is the violet console, `light` is the daylight one. In the desktop app the small ◐ button in the band's top-left corner flips between dark and light, and the pick is remembered.
@@ -44,5 +44,7 @@ From a shell:
 ```
 claude plugin install usage-meter --marketplace whatsphone-creator/claude-usage-mod
 ```
+
+Add `--config plan="MAX PLAN"` or `--config skin=light` to set an option as you install.
 
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `whatsphone-creator/claude-usage-mod`, then Add plugin.
