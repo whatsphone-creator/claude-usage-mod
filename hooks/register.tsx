@@ -164,7 +164,8 @@ type Seg = { text: string; color: string; weight?: number } | { bar: number }
 
 // The desktop band as one SVG: an octagon frame, a header strip and octagon readout chips.
 // `plan` is the label in the header's right corner (the `plan` option); empty draws none.
-export function drawConsole(r: Reading, t: Tokens, last: number, now: number, plan: string) {
+// `hasSwitch` leaves the header's left stripes out: the skin button is laid over that corner.
+export function drawConsole(r: Reading, t: Tokens, last: number, now: number, plan: string, hasSwitch = false) {
   const SIZE = 13
   const PAD = 7
   const CHIP_H = 22
@@ -231,7 +232,7 @@ export function drawConsole(r: Reading, t: Tokens, last: number, now: number, pl
     `<line x1="${x}" y1="${headY - 4}" x2="${x}" y2="${headY + 4}" stroke="${C.edge}" stroke-width="1"/>`
 
   let hx = PAD
-  for (let i = 0; i < 3; i++) out.push(stripe(hx + i * 9, headY - 3.5, 6, 7, 3, C.edge))
+  if (!hasSwitch) for (let i = 0; i < 3; i++) out.push(stripe(hx + i * 9, headY - 3.5, 6, 7, 3, C.edge))
   hx += 3 * 9 + 4
   out.push(vline(hx))
   hx += 6
@@ -431,17 +432,22 @@ export const register: Register = (on, options) => {
     // chamfered (octagon) corners, which a Box border cannot.
     const els = $.ui.resolve(e)
     if (e.surface !== 'terminal' && 'Svg' in els) {
-      const { svg, alt } = drawConsole(r, t, last, now, plan)
-      // The drawing takes no press itself, so the skin switch is a small button beside it.
+      const { svg, alt } = drawConsole(r, t, last, now, plan, true)
+      // The drawing takes no press itself, so the skin switch is a small button laid over its
+      // top-left corner, where the header's stripes would be.
       const flip = async () => {
         const to = skin === 'light' ? 'dark' : 'light'
         await update($, skinPick, () => to)
         await $.store.set('skin', to).catch(() => {})
       }
       return (
-        <els.Box alignItems="center" gap="xs">
+        <els.Box position="relative" alignSelf="flex-start">
           <els.Svg source={dress(svg, skin)} alt={alt} />
-          <els.Button key="skin" plain dimColor label="◐" onPress={() => void flip()} />
+          <els.Box position="absolute" top={0} left={0}>
+            <els.Button key="skin" plain onPress={() => void flip()}>
+              <els.Text weight="bold" color={(skin === 'light' ? LIGHT : C).edge}>◐</els.Text>
+            </els.Button>
+          </els.Box>
         </els.Box>
       )
     }

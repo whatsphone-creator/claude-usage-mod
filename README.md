@@ -27,7 +27,7 @@ The plan name in the header's right corner is the mod's `plan` option (empty by 
 { "pluginConfigs": { "usage-meter": { "options": { "plan": "MAX PLAN" } } } }
 ```
 
-The `skin` option picks the look: `auto` (the default) follows light or dark mode where the surface lets the drawing see it and is otherwise dark, `dark` is the violet console, `light` is the daylight one. In the desktop app the small ◐ button beside the band flips between dark and light, and the pick is remembered.
+The `skin` option picks the look: `auto` (the default) follows light or dark mode where the surface lets the drawing see it and is otherwise dark, `dark` is the violet console, `light` is the daylight one. In the desktop app the small ◐ button in the band's top-left corner flips between dark and light, and the pick is remembered.
 
 ## Install
 
