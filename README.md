@@ -2,6 +2,14 @@
 
 A Claude Code mod that shows your usage in a band above the prompt, styled like a console readout.
 
+![The usage band: context, 5-hour, 7-day and Fable limits, and session tokens](docs/band.png)
+
+Readouts turn amber at 75% and red at 90%:
+
+![The band with limits running high](docs/band-high.png)
+
+(Both pictures are the mod's own drawing with sample numbers.)
+
 - **CTX**: how full this session's context window is.
 - **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset.
 - **FABLE** (and other per-model weekly limits): read from Anthropic's account usage endpoint with the session's own sign-in, refreshed every 5 minutes. A limit that resets at the same moment as 7D shares its chip and countdown.
@@ -32,5 +40,3 @@ claude plugin install usage-meter --marketplace whatsphone-creator/claude-usage-
 ```
 
 In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `whatsphone-creator/claude-usage-mod`, then Add plugin.
-
-This repository is private: it installs only for people who can read it on GitHub and whose machine already has a git credential for github.com (an SSH key, or `gh auth login` then `gh auth setup-git`).
