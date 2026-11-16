@@ -4,6 +4,7 @@ A Claude Code mod that shows your usage in a band above the prompt, styled like 
 
 - **CTX**: how full this session's context window is.
 - **5H / 7D**: how much of your 5-hour and 7-day plan limits you have used, with a bar that turns amber at 75% and red at 90%, and a countdown to each reset.
+- **FABLE** (and other per-model weekly limits): read from Anthropic's account usage endpoint with the session's own sign-in, refreshed every 5 minutes. A limit that resets at the same moment as 7D shares its chip and countdown.
 - **TOK**: tokens this session has used since the mod loaded, plus the last turn's tokens.
 
 In the desktop app the band is drawn as one picture with octagon frames; in a terminal it is a single text line. Run `/usage-meter` to hide or show it.

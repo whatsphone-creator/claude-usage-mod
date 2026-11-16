@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Reading, Tokens } from '../types'
+import type { Limit, Reading, Tokens } from '../types'
 
 const reading = atom({ plugin: 'usage-meter', key: 'reading' } as const, null)
 const isHidden = atom({ plugin: 'usage-meter', key: 'isHidden' } as const, false)
@@ -9,6 +9,13 @@ const NO_TOKENS: Tokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 const tokens = atom({ plugin: 'usage-meter', key: 'tokens' } as const, NO_TOKENS)
 // Tokens the last main-conversation turn used (its responses summed).
 const lastTurn = atom({ plugin: 'usage-meter', key: 'lastTurn' } as const, 0)
+
+// Per-model weekly windows (Fable, Opus, ...) the account's usage endpoint reports;
+// the session's own usage carries only the 5-hour and 7-day windows.
+const NO_LIMITS: Limit[] = []
+const modelLimits = atom({ plugin: 'usage-meter', key: 'modelLimits' } as const, NO_LIMITS)
+// What the last fetch of that endpoint came to, for /usage-meter to report.
+const modelNote = atom({ plugin: 'usage-meter', key: 'modelNote' } as const, 'not fetched yet')
 
 function totalTokens(t: Tokens): number {
   return t.input + t.output + t.cacheRead + t.cacheWrite
@@ -26,7 +33,10 @@ const CODES: Record<string, string> = { five_hour: '5H', seven_day: '7D', spend_
 // Per-model windows (such as a weekly Fable limit) arrive under their own kind when the app passes them.
 function codeFor(kind: string): string {
   if (CODES[kind]) return CODES[kind]
-  if (/fable/i.test(kind)) return 'FABLE'
+  const model = /fable|opus|sonnet|haiku/i.exec(kind)
+  if (model) return model[0].toUpperCase()
+  // A scoped window the endpoint named some other way: its scope's last word.
+  if (kind.includes(':')) return (kind.split(':')[1]?.match(/[a-z0-9]+/gi)?.pop() ?? 'MODEL').toUpperCase().slice(0, 8)
   return kind.toUpperCase()
 }
 const LABELS: Record<string, string> = { five_hour: '5 小時', seven_day: '7 日', spend_limit: '額度' }
@@ -106,6 +116,19 @@ function stripe(x: number, y: number, w: number, h: number, slant: number, fill:
   return `<polygon points="${x + slant},${y} ${x + w + slant},${y} ${x + w},${y + h} ${x},${y + h}" fill="${fill}"/>`
 }
 
+// Windows that reset at the same moment (the 7-day limit and a model's weekly limit) share one
+// chip and one countdown.
+function groupLimits(limits: Limit[], now: number): { members: Limit[]; left: string }[] {
+  const groups: { members: Limit[]; left: string }[] = []
+  for (const l of limits) {
+    const left = untilReset(l.resetsAt, now)
+    const same = left ? groups.find(g => g.left === left) : undefined
+    if (same) same.members.push(l)
+    else groups.push({ members: [l], left })
+  }
+  return groups
+}
+
 type Seg = { text: string; color: string; weight?: number } | { bar: number }
 
 // The desktop band as one SVG: an octagon frame, a header strip and octagon readout chips.
@@ -131,12 +154,16 @@ export function drawConsole(r: Reading, t: Tokens, last: number, now: number) {
   })
   altParts.push(`Context ${r.contextPercent !== undefined ? `${Math.round(r.contextPercent)}%` : 'unknown'}`)
 
-  for (const l of r.limits) {
-    const segs: Seg[] = [{ text: codeFor(l.kind), color: C.code, weight: 700 }, { bar: l.percentUsed }, pctSeg(l.percentUsed)]
-    const left = untilReset(l.resetsAt, now)
+  for (const { members, left } of groupLimits(r.limits, now)) {
+    const segs: Seg[] = members.flatMap(l => [
+      { text: codeFor(l.kind), color: C.code, weight: 700 },
+      { bar: l.percentUsed },
+      pctSeg(l.percentUsed),
+    ])
     if (left) segs.push({ text: left, color: C.note })
     chips.push({ segs })
-    altParts.push(`${codeFor(l.kind)} ${Math.round(l.percentUsed)}%${left ? ` resets in ${left}` : ''}`)
+    const read = members.map(l => `${codeFor(l.kind)} ${Math.round(l.percentUsed)}%`).join(' and ')
+    altParts.push(`${read}${left ? ` resets in ${left}` : ''}`)
   }
 
   chips.push({
@@ -249,6 +276,53 @@ async function refresh($: EngineInterface) {
   await update($, reading, () => toReading(u))
 }
 
+const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
+
+// Asks Anthropic's usage endpoint, with the session's own sign-in (the engine holds the
+// credential and adds it to the request), for the windows the session does not pass on.
+async function refreshModels($: EngineInterface) {
+  let note: string
+  try {
+    const auth = await $.session.authorize()
+    if (!auth || auth.kind !== 'bearer') {
+      note = 'no subscription sign-in'
+    } else {
+      const res = await $.http.fetch(USAGE_URL, {
+        auth: auth.handle,
+        headers: { 'anthropic-beta': 'oauth-2025-04-20' },
+      })
+      if (!res.ok) {
+        note = `HTTP ${res.status}`
+      } else {
+        const body = JSON.parse(res.text) as { limits?: unknown } | null
+        const found: Limit[] = []
+        const seen: string[] = []
+        // `limits` lists every window; the scoped ones (a weekly limit for one model, such as
+        // Fable) are the ones the session does not pass on. `scope` says what each covers.
+        const rows = Array.isArray(body?.limits) ? body.limits : []
+        for (const row of rows) {
+          if (!row || typeof row !== 'object') continue
+          const { kind, percent, resets_at, scope } = row as Record<string, unknown>
+          if (typeof kind !== 'string' || typeof percent !== 'number') continue
+          const what = scope == null ? '' : typeof scope === 'string' ? scope : JSON.stringify(scope)
+          seen.push(`${kind}${what ? ` (${what})` : ''} ${percent}%`)
+          if (!what) continue
+          found.push({
+            kind: `${kind}:${what}`,
+            percentUsed: percent,
+            resetsAt: typeof resets_at === 'string' ? resets_at : undefined,
+          })
+        }
+        await update($, modelLimits, () => found)
+        note = seen.join(', ') || `no windows in the answer: ${res.text.slice(0, 300)}`
+      }
+    }
+  } catch (err) {
+    note = `failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200)
+  }
+  await update($, modelNote, () => note)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -256,6 +330,8 @@ export const register: Register = on => {
     // The countdowns run on while nothing else changes: read the usage again each minute,
     // which also picks up a window that has just reset.
     $.clock.every(60_000, () => void refresh($).catch(() => {}))
+    void refreshModels($)
+    $.clock.every(300_000, () => void refreshModels($))
     $.command.register({ name: 'usage-meter', description: 'Show or hide the usage meter above the prompt' })
     return result
   })
@@ -290,23 +366,26 @@ export const register: Register = on => {
 
   on('command.run', { command: 'usage-meter' }, async ($, e, next) => {
     const hidden = await update($, isHidden, v => !v)
-    if (!hidden) await refresh($)
+    if (!hidden) await Promise.all([refresh($), refreshModels($)])
     const r = await read($, reading)
     const kinds = r?.limits.map(l => `${l.kind} ${l.percentUsed}%`).join(', ') || 'none'
     return {
-      text: (hidden ? 'Usage meter hidden. Run /usage-meter to show it again.' : 'Usage meter shown.') + `\nLimits from the app: ${kinds}`,
+      text: (hidden ? 'Usage meter hidden. Run /usage-meter to show it again.' : 'Usage meter shown.') + `\nLimits from the app: ${kinds}\nUsage endpoint: ${await read($, modelNote)}`,
     }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const [r, hidden, t, last, now] = await Promise.all([
+    const [session, models, hidden, t, last, now] = await Promise.all([
       read($, reading),
+      read($, modelLimits),
       read($, isHidden),
       read($, tokens),
       read($, lastTurn),
       $.clock.now(),
     ])
-    if (r === null || hidden || e.props.hasSurvey) return next(e)
+    if (session === null || hidden || e.props.hasSurvey) return next(e)
+    const known = new Set(session.limits.map(l => l.kind))
+    const r: Reading = { ...session, limits: [...session.limits, ...models.filter(l => !known.has(l.kind))] }
 
     // Desktop, mobile and the editor: the band is one drawing, so its frames can have
     // chamfered (octagon) corners, which a Box border cannot.
@@ -334,9 +413,11 @@ export const register: Register = on => {
     const chips: JSX.Element[][] = [
       [code('CTX'), r.contextPercent !== undefined ? pct(r.contextPercent) : note('--')],
     ]
-    for (const l of r.limits) {
-      const left = untilReset(l.resetsAt, now)
-      chips.push([code(codeFor(l.kind)), bar(l.percentUsed), pct(l.percentUsed), ...(left ? [note(left)] : [])])
+    for (const { members, left } of groupLimits(r.limits, now)) {
+      chips.push([
+        ...members.flatMap(l => [code(codeFor(l.kind)), bar(l.percentUsed), pct(l.percentUsed)]),
+        ...(left ? [note(left)] : []),
+      ])
     }
     chips.push([
       code('TOK'),

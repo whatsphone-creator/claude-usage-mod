@@ -30,7 +30,7 @@ test('the band draws context, limits and tokens on every surface', async ($, on)
               contextWindow: 200000,
               limits: [
                 { kind: 'five_hour', percentUsed: 82, resetsAt: '2099-01-01T00:00:00Z' },
-                { kind: 'seven_day', percentUsed: 8 },
+                { kind: 'seven_day', percentUsed: 8, resetsAt: '2099-01-03T00:00:00Z' },
               ],
             },
             version: 1,
@@ -38,6 +38,10 @@ test('the band draws context, limits and tokens on every surface', async ($, on)
         }
       : e.key === 'tokens'
         ? { value: { value: { input: 1000, output: 85000, cacheRead: 12000000, cacheWrite: 200000 }, version: 1 } }
+        : e.key === 'modelLimits'
+          ? { value: { value: [{ kind: 'weekly_scoped:claude-fable-5', percentUsed: 41, resetsAt: '2099-01-03T00:00:00Z' }], version: 1 } }
+          : e.key === 'modelNote'
+            ? { value: { value: '', version: 1 } }
         : e.key === 'lastTurn'
           ? { value: { value: 215000, version: 1 } }
           : { value: { value: false, version: 1 } },
@@ -53,6 +57,8 @@ test('the band draws context, limits and tokens on every surface', async ($, on)
   expect((await term.find({ type: 'Text', text: /^\+215k$/ }))?.text).toBe('+215k')
   expect(await term.find({ type: 'Text', text: /\$/ })).toBeUndefined()
   expect((await term.find({ type: 'Text', text: /^02:30$/ }))?.text).toBe('02:30')
+  expect((await term.find({ type: 'Text', text: /^FABLE$/ }))?.text).toBe('FABLE')
+  expect((await term.find({ type: 'Text', text: /^41%$/ }))?.text).toBe('41%')
   await term.unmount()
 
   // Desktop and mobile: one SVG with octagon frames carrying the same readouts.
@@ -60,9 +66,11 @@ test('the band draws context, limits and tokens on every surface', async ($, on)
     const ui = await $.ui.mount({ ...BAND, surface })
     const svg = await ui.find({ type: 'Svg' })
     const source = String(svg?.props.source ?? '')
-    for (const shown of ['>38%<', '>82%<', '>TOK<', '>12.3M<', '>+215k<', '>02:30<', '>Claude-usage<', '>ULTRA PLAN<']) {
+    for (const shown of ['>38%<', '>82%<', '>TOK<', '>12.3M<', '>+215k<', '>02:30<', '>Claude-usage<', '>ULTRA PLAN<', '>FABLE<', '>41%<', '>2d02:30<', '>7D<', '>8%<']) {
       expect(source.includes(shown)).toBe(true)
     }
+    // 7D and FABLE reset together, so they share one chip and one countdown.
+    expect(source.split('>2d02:30<').length - 1).toBe(1)
     expect(source.includes('200k')).toBe(false)
     expect(source.includes('$')).toBe(false)
     expect(source.includes('OUT')).toBe(false)
