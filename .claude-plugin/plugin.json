@@ -1,6 +1,6 @@
 {
   "name": "usage-meter",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Shows context, 5-hour / 7-day limits and session tokens above the prompt",
   "types": "./types/index.d.ts",
   "userConfig": {

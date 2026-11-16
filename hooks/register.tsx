@@ -21,6 +21,9 @@ const NO_LIVE: Live = { at: 0, limits: [] }
 const live = atom({ plugin: 'usage-meter', key: 'live' } as const, NO_LIVE)
 // When the session last measured its own usage.
 const measuredAt = atom({ plugin: 'usage-meter', key: 'measuredAt' } as const, 0)
+// The limits already announced as past the red line.
+const NO_KINDS: string[] = []
+const told = atom({ plugin: 'usage-meter', key: 'told' } as const, NO_KINDS)
 // What the last fetch of that endpoint came to, for /usage-meter to report.
 const modelNote = atom({ plugin: 'usage-meter', key: 'modelNote' } as const, 'not fetched yet')
 
@@ -316,6 +319,25 @@ async function refresh($: EngineInterface) {
   await update($, reading, () => toReading(u))
 }
 
+// One toast as a limit crosses the red line, whichever source saw it: not one per percent after
+// it, and not again when the two sources disagree by a point. A limit is told again only after
+// it has fallen well back (a reset).
+async function announce($: EngineInterface, limits: Limit[]) {
+  const stored = await read($, told)
+  const before = Array.isArray(stored) ? stored : []
+  const still = before.filter(kind => {
+    const l = limits.find(x => x.kind === kind)
+    return !l || l.percentUsed >= HOT_AT - 5
+  })
+  const crossed = limits.filter(l => l.percentUsed >= HOT_AT && !still.includes(l.kind))
+  if (crossed.length === 0 && still.length === before.length) return
+  await update($, told, () => [...still, ...crossed.map(l => l.kind)])
+  if (crossed.length > 0) {
+    const each = crossed.map(l => `${LABELS[l.kind] ?? codeFor(l.kind)} limit at ${Math.round(l.percentUsed)}%`)
+    $.ui.toast(each.join(', '))
+  }
+}
+
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 
 // Asks Anthropic's usage endpoint, with the session's own sign-in (the engine holds the
@@ -367,6 +389,7 @@ async function refreshModels($: EngineInterface) {
           })
         }
         await update($, modelLimits, () => found)
+        await announce($, [...base, ...found])
         note = seen.join(', ') || `no windows in the answer: ${res.text.slice(0, 300)}`
       }
     }
@@ -396,14 +419,10 @@ export const register: Register = (on, options) => {
   })
 
   on('session.measure', async ($, e, next) => {
-    const before = await read($, reading)
     await update($, reading, () => toReading(e))
     const at = await $.clock.now()
     await update($, measuredAt, () => at)
-    // One toast as a limit crosses the red line, not one per percent after it.
-    const wasHot = (kind: string) => (before?.limits.find(l => l.kind === kind)?.percentUsed ?? 0) >= HOT_AT
-    const hot = e.rateLimits.find(l => l.percentUsed >= HOT_AT && !wasHot(l.kind))
-    if (hot) $.ui.toast(`${LABELS[hot.kind] ?? hot.kind} limit at ${Math.round(hot.percentUsed)}%`)
+    await announce($, e.rateLimits)
     return next(e)
   })
 

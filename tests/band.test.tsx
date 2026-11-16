@@ -200,3 +200,38 @@ test('the endpoint\'s 5-hour and 7-day figures replace the session\'s once they 
   expect(source.includes('>12%<')).toBe(true)
   await ui.unmount()
 })
+
+test('a limit the endpoint reports past 90% is toasted once', async ($, on) => {
+  const toasts: string[] = []
+  on('clock.now', () => ({ value: Date.parse('2098-12-31T21:30:00Z') }))
+  on('session.authorize', () => ({ value: { handle: 'h', kind: 'bearer' as const } }))
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { percent: 10, tokens: 20000, window: 200000 }, rateLimits: [] },
+  }))
+  on('http.fetch', () => ({
+    value: {
+    status: 200,
+    ok: true,
+    headers: {},
+    text: JSON.stringify({
+      five_hour: { utilization: 93, resets_at: '2099-01-01T00:00:00Z' },
+      seven_day: { utilization: 40, resets_at: '2099-01-03T00:00:00Z' },
+      limits: [{ kind: 'weekly_scoped', percent: 95, resets_at: '2099-01-03T00:00:00Z', scope: 'fable' }],
+    }),
+    },
+  }))
+  on('ui.toast', (_, e) => {
+    toasts.push(String(e.text))
+    return { value: undefined }
+  })
+  // The first run hides the band; the second shows it and fetches the endpoint.
+  await $.command.run({ command: 'usage-meter', args: '' } as never)
+  await $.command.run({ command: 'usage-meter', args: '' } as never)
+  expect(toasts.length).toBe(1)
+  expect(toasts[0]).toContain('93%')
+  expect(toasts[0]).toContain('FABLE limit at 95%')
+  // The same figures again: nothing new to say.
+  await $.command.run({ command: 'usage-meter', args: '' } as never)
+  await $.command.run({ command: 'usage-meter', args: '' } as never)
+  expect(toasts.length).toBe(1)
+})
