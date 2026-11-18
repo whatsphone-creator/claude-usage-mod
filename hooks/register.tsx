@@ -54,7 +54,6 @@ export function systemText(skills: CommandInfo[]): string {
     'You pick at most one Claude Code skill that clearly fits the user\'s message.',
     'Answer with JSON only: {"skill": "<name from the list>" | null, "why": "<at most 12 Cantonese characters on what it is for>"}.',
     'Answer null unless one skill is plainly the right tool for this message. Small talk, questions about the conversation and quick replies get null.',
-    'The user prefers impeccable and design-taste-frontend for UI/UX work, and does not use ui-ux-pro-max.',
     '',
     'Skills:',
     lines,

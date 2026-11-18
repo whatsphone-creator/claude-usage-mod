@@ -99,13 +99,12 @@ test('the reply is read only when it names a listed skill', () => {
   const names = new Set(['impeccable', 'pdf'])
   expect(parseHint('{"skill": "pdf", "why": "讀 PDF"}', names)).toEqual({ skill: 'pdf', why: '讀 PDF' })
   expect(parseHint('Sure: {"skill":"impeccable","why":"整 UI"}', names)?.skill).toBe('impeccable')
-  expect(parseHint('{"skill": "ui-ux-pro-max", "why": "x"}', names)).toBeNull()
+  expect(parseHint('{"skill": "not-listed", "why": "x"}', names)).toBeNull()
   expect(parseHint('{"skill": null}', names)).toBeNull()
   expect(parseHint('no json here', names)).toBeNull()
 })
 
-test('the cached list carries each skill and the UI preference', () => {
+test('the cached list carries each skill', () => {
   const text = systemText([{ name: 'impeccable', description: 'Design and polish a frontend', source: 'plugin' }])
   expect(text).toContain('- impeccable: Design and polish a frontend')
-  expect(text).toContain('ui-ux-pro-max')
 })
