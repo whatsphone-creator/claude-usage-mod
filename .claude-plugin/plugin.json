@@ -1,7 +1,7 @@
 {
   "name": "usage-meter",
-  "version": "0.10.1",
-  "description": "Shows context, 5-hour / 7-day limits and session tokens above the prompt",
+  "version": "0.11.0",
+  "description": "Shows context, 5-hour / 7-day limits and session tokens above the prompt, and suggests an installed skill that fits each message",
   "types": "./types/index.d.ts",
   "userConfig": {
     "plan": {
@@ -20,6 +20,12 @@
         "light"
       ],
       "default": "auto"
+    },
+    "skillHints": {
+      "type": "boolean",
+      "title": "Skill hints",
+      "description": "After you send a message, a small model checks your installed skills and suggests one that fits. Each check uses a little of your usage.",
+      "default": true
     }
   }
 }

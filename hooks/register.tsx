@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, SessionUsage } from 'claude-code'
+import type { CommandInfo, EngineInterface, Register, SessionUsage } from 'claude-code'
 
-import type { Limit, Live, Reading, Tokens } from '../types'
+import type { Hint, Limit, Live, Reading, Tokens } from '../types'
 
 const reading = atom({ plugin: 'usage-meter', key: 'reading' } as const, null)
 const isHidden = atom({ plugin: 'usage-meter', key: 'isHidden' } as const, false)
@@ -31,6 +31,71 @@ const modelNote = atom({ plugin: 'usage-meter', key: 'modelNote' } as const, 'no
 // Kept in the store too, so the pick outlasts the session.
 const NO_PICK: 'dark' | 'light' | null = null
 const skinPick = atom({ plugin: 'usage-meter', key: 'skinPick' } as const, NO_PICK)
+
+// The skill suggested for the last message. Change the tag when Hint's fields change.
+const hint = atom({ plugin: 'usage-meter', key: 'hint' } as const, null as Hint | null, { shape: 'hint-1' })
+// Only the newest message's answer is shown; an older one arriving late is dropped.
+let asked = 0
+
+// Skills and the commands plugins add; the engine's own commands and MCP prompts are left out.
+function isSkill(c: CommandInfo): boolean {
+  return c.source !== 'builtin' && c.source !== 'mcp'
+}
+
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat
+}
+
+// The fixed part of the request, cached by the API so later messages only pay for the message.
+export function systemText(skills: CommandInfo[]): string {
+  const lines = skills.map(s => `- ${s.name}: ${oneLine(s.description, 160)}`).join('\n')
+  return [
+    'You pick at most one Claude Code skill that clearly fits the user\'s message.',
+    'Answer with JSON only: {"skill": "<name from the list>" | null, "why": "<at most 12 Cantonese characters on what it is for>"}.',
+    'Answer null unless one skill is plainly the right tool for this message. Small talk, questions about the conversation and quick replies get null.',
+    'The user prefers impeccable and design-taste-frontend for UI/UX work, and does not use ui-ux-pro-max.',
+    '',
+    'Skills:',
+    lines,
+  ].join('\n')
+}
+
+// Reads the model's reply; anything that does not name a listed skill is no hint.
+export function parseHint(text: string, names: Set<string>): Hint | null {
+  const match = text.match(/\{[\s\S]*\}/)
+  if (!match) return null
+  try {
+    const data = JSON.parse(match[0]) as { skill?: unknown; why?: unknown }
+    if (typeof data.skill !== 'string' || !names.has(data.skill)) return null
+    return { skill: data.skill, why: typeof data.why === 'string' ? oneLine(data.why, 30) : '' }
+  } catch {
+    return null
+  }
+}
+
+// What the hint's button sends: the conversation already holds the message it refers to.
+export function useSkillText(skill: string): string {
+  return `請用 Skill 工具執行 ${skill}，處理我上一個訊息。`
+}
+
+async function suggest($: EngineInterface, text: string, ticket: number) {
+  const skills = (await $.command.list()).filter(isSkill)
+  if (skills.length === 0) return
+  const names = new Set(skills.map(s => s.name))
+  const reply = await $.model.complete({
+    model: 'haiku',
+    system: [{ text: systemText(skills), cache: true }],
+    prompt: oneLine(text, 2000),
+    maxTokens: 120,
+    timeoutMs: 20000,
+  })
+  if (ticket !== asked || !reply.isAnswered) return
+  const found = parseHint(reply.text, names)
+  // A message that already names the skill needs no hint.
+  const next = found && !text.includes(found.skill) ? found : null
+  await update($, hint, () => next)
+}
 
 function totalTokens(t: Tokens): number {
   return t.input + t.output + t.cacheRead + t.cacheWrite
@@ -403,6 +468,7 @@ export const register: Register = (on, options) => {
   // Claude Code does not tell a mod which plan the account is on, so the label is an option.
   const plan = String(options.plan ?? '').trim().slice(0, 24)
   const configured: Skin = options.skin === 'light' || options.skin === 'dark' ? options.skin : 'auto'
+  const hintsOn = options.skillHints !== false
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
@@ -444,6 +510,32 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  on('prompt.submit', async ($, e, next) => {
+    const result = await next(e)
+    if (!hintsOn) return result
+    const ticket = ++asked
+    await update($, hint, () => null)
+    const text = e.text.trim()
+    // Slash commands, very short replies and prompts plugins send (the hint's button too) are skipped.
+    if (e.origin?.kind !== 'plugin' && e.command === undefined && !text.startsWith('/') && text.length >= 8) {
+      // A hook's dispatch ends when it returns and cuts a model call it left running,
+      // so the lookup starts from a timer, after the dispatch.
+      $.clock.after(0, () => {
+        void suggest($, text, ticket).catch(() => {})
+      })
+    }
+    return result
+  })
+
+  // Once the suggested skill runs, the hint has done its job.
+  on('tool.call', async ($, e, next) => {
+    if (e.tool === 'Skill') {
+      const current = await read($, hint)
+      if (current && e.skill === current.skill) await update($, hint, () => null)
+    }
+    return next(e)
+  })
+
   on('command.run', { command: 'usage-meter' }, async ($, e, next) => {
     const hidden = await update($, isHidden, v => !v)
     if (!hidden) await Promise.all([refresh($), refreshModels($)])
@@ -467,7 +559,40 @@ export const register: Register = (on, options) => {
       read($, measuredAt),
     ])
     const skin: Skin = pick === 'dark' || pick === 'light' ? pick : configured
-    if (session === null || hidden || e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey) return next(e)
+    const els = $.ui.resolve(e)
+    const suggested = hintsOn ? await read($, hint) : null
+    const hintRow = suggested && (
+      <els.Box key="hint" flexDirection="row" gap={1} alignItems="center" flexWrap="nowrap" overflow="hidden">
+        <els.Text color="claude">💡 可以用</els.Text>
+        <els.Text weight="bold">/{suggested.skill}</els.Text>
+        {suggested.why !== '' && <els.Text color="inactive">{suggested.why}</els.Text>}
+        <els.Button
+          key="use"
+          plain
+          onPress={async () => {
+            await update($, hint, () => null)
+            await $.prompt.submit({ text: useSkillText(suggested.skill), asUser: true })
+          }}
+        >
+          <els.Text color="claude" weight="bold">用呢個</els.Text>
+        </els.Button>
+        <els.Button key="dismiss" plain onPress={() => update($, hint, () => null)}>
+          <els.Text color="inactive">✕</els.Text>
+        </els.Button>
+      </els.Box>
+    )
+    // The band is one row per plugin, so the hint stacks under the meter inside it.
+    const withHint = (band: JSX.Element) =>
+      hintRow ? (
+        <els.Box flexDirection="column" gap={1} alignItems="flex-start">
+          {band}
+          {hintRow}
+        </els.Box>
+      ) : (
+        band
+      )
+    if (session === null || hidden) return hintRow || next(e)
     // Whichever measured the 5-hour and 7-day windows last is shown: the session or the endpoint.
     const fresh = fetched && Array.isArray(fetched.limits) && fetched.at > (Number(measured) || 0) ? fetched.limits : []
     const base = session.limits.map(l => fresh.find(f => f.kind === l.kind) ?? l)
@@ -477,7 +602,6 @@ export const register: Register = (on, options) => {
 
     // Desktop, mobile and the editor: the band is one drawing, so its frames can have
     // chamfered (octagon) corners, which a Box border cannot.
-    const els = $.ui.resolve(e)
     if (e.surface !== 'terminal' && 'Svg' in els) {
       const { svg, alt } = drawConsole(r, t, last, now, plan, true)
       // The drawing takes no press itself, so the skin switch is a small button laid over its
@@ -487,7 +611,7 @@ export const register: Register = (on, options) => {
         await update($, skinPick, () => to)
         await $.store.set('skin', to).catch(() => {})
       }
-      return (
+      return withHint(
         <els.Box position="relative" alignSelf="flex-start">
           <els.Svg source={dress(svg, skin)} alt={alt} />
           <els.Box position="absolute" top={0} left={0}>
@@ -495,7 +619,7 @@ export const register: Register = (on, options) => {
               <els.Text weight="bold" color={(skin === 'light' ? LIGHT : C).edge}>◐</els.Text>
             </els.Button>
           </els.Box>
-        </els.Box>
+        </els.Box>,
       )
     }
 
@@ -531,7 +655,7 @@ export const register: Register = (on, options) => {
       ...(last > 0 ? [note(`+${compact(last)}`)] : []),
     ])
 
-    return (
+    return withHint(
       <Box flexWrap="nowrap" alignItems="center" gap={1} overflow="hidden">
         <Text weight="bold" color={P.hot}>⚠</Text>
         {chips.map((parts, i) => (
@@ -540,7 +664,7 @@ export const register: Register = (on, options) => {
             {parts}
           </Box>
         ))}
-      </Box>
+      </Box>,
     )
   })
 }

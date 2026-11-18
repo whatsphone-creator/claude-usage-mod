@@ -29,6 +29,20 @@ The plan name in the header's right corner is the mod's `plan` option (empty by 
 
 The `skin` option picks the look: `auto` (the default) follows light or dark mode where the surface lets the drawing see it and is otherwise dark, `dark` is the violet console, `light` is the daylight one. In the desktop app the small ◐ button in the band's top-left corner flips between dark and light, and the pick is remembered.
 
+## Skill hints
+
+After you send a message, a small model (Haiku) checks it against your installed skills. If one plainly fits, a line appears under the band: `💡 可以用 /skill-name`, a short reason, **用呢個** and ✕.
+
+- **用呢個** asks Claude to run that skill on your last message. If Claude is busy, it waits its turn.
+- ✕ dismisses the hint. It also goes when you send another message or the skill runs.
+- Slash commands and messages under 8 characters are not checked.
+
+Each check uses a little of your usage. To turn hints off, set the `skillHints` option to `false`:
+
+```json
+{ "pluginConfigs": { "usage-meter@claude-usage-mod": { "options": { "skillHints": false } } } }
+```
+
 ## Install
 
 At the prompt of a terminal session:
