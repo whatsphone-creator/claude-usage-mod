@@ -35,7 +35,7 @@ After you send a message, a small model (Haiku) checks it against your installed
 
 - **用呢個** asks Claude to run that skill on your last message. If Claude is busy, it waits its turn.
 - ✕ dismisses the hint. It also goes when you send another message or the skill runs.
-- Slash commands and messages under 8 characters are not checked.
+- Slash commands, messages under 8 characters and automated prompts (scheduled tasks, notifications, other sessions) are not checked.
 
 Each check uses a little of your usage. To turn hints off, set the `skillHints` option to `false`:
 

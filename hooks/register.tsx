@@ -78,6 +78,29 @@ export function useSkillText(skill: string): string {
   return `請用 Skill 工具執行 ${skill}，處理我上一個訊息。`
 }
 
+// Prompts no person is waiting on: scheduled tasks, notifications, other sessions, plugins
+// (the hint's button too). A kind not named here counts as a person, so a hint is never lost
+// to a new way of typing.
+const UNATTENDED = new Set<string>([
+  'task-notification',
+  'scheduled-trigger',
+  'peer',
+  'peer-send-message',
+  'projects-relay',
+  'channel',
+  'coordinator',
+  'observer',
+  'observer-activity',
+  'auto-continuation',
+  'slack-ping',
+  'plugin',
+])
+
+export function isFromPerson(originKind: string | undefined, text: string): boolean {
+  if (originKind !== undefined && UNATTENDED.has(originKind)) return false
+  return !/^<(scheduled-task|task-notification|system-reminder)\b/.test(text.trimStart())
+}
+
 async function suggest($: EngineInterface, text: string, ticket: number) {
   const skills = (await $.command.list()).filter(isSkill)
   if (skills.length === 0) return
@@ -511,12 +534,13 @@ export const register: Register = (on, options) => {
 
   on('prompt.submit', async ($, e, next) => {
     const result = await next(e)
-    if (!hintsOn) return result
+    // An automated prompt costs no lookup and leaves a hint on screen alone.
+    if (!hintsOn || !isFromPerson(e.origin?.kind, e.text)) return result
     const ticket = ++asked
     await update($, hint, () => null)
     const text = e.text.trim()
-    // Slash commands, very short replies and prompts plugins send (the hint's button too) are skipped.
-    if (e.origin?.kind !== 'plugin' && e.command === undefined && !text.startsWith('/') && text.length >= 8) {
+    // Slash commands and very short replies are not worth a lookup.
+    if (e.command === undefined && !text.startsWith('/') && text.length >= 8) {
       // A hook's dispatch ends when it returns and cuts a model call it left running,
       // so the lookup starts from a timer, after the dispatch.
       $.clock.after(0, () => {

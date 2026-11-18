@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { parseHint, systemText, useSkillText } from '../hooks/register'
+import { isFromPerson, parseHint, systemText, useSkillText } from '../hooks/register'
 
 const BAND = {
   plugin: 'usage-meter',
@@ -107,4 +107,15 @@ test('the reply is read only when it names a listed skill', () => {
 test('the cached list carries each skill', () => {
   const text = systemText([{ name: 'impeccable', description: 'Design and polish a frontend', source: 'plugin' }])
   expect(text).toContain('- impeccable: Design and polish a frontend')
+})
+
+test('only a person\'s message is worth a lookup', () => {
+  for (const kind of [undefined, 'composer', 'sdk', 'bridge', 'unclassified', 'human']) {
+    expect(isFromPerson(kind, '幫我整個新 landing page')).toBe(true)
+  }
+  for (const kind of ['task-notification', 'scheduled-trigger', 'peer', 'coordinator', 'plugin']) {
+    expect(isFromPerson(kind, '幫我整個新 landing page')).toBe(false)
+  }
+  expect(isFromPerson('sdk', '<scheduled-task name="hq-answer-relay">run</scheduled-task>')).toBe(false)
+  expect(isFromPerson('sdk', '<div> 呢段 HTML 點改')).toBe(true)
 })
